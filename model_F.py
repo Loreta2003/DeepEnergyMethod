@@ -100,15 +100,14 @@ class PINN(layers.Layer):
         wL, _, ddwL, dddwL = third_gradient(self.mlp, self.L / self.x_c)
 
         res_pde = self._labeled_data_residual()
-        # pel residual
-        print(x)
+        #pel residual
         #-----------------------GAUSS QUADRATURE TRY---------------------------------#
         # Generate nodes and weights for Gauss-Legendre quadrature
         nodes, weights = np.polynomial.legendre.leggauss(1000)
 
         # Transform nodes to the desired interval [a, b]
-        a = x[0]
-        b = x[1]
+        a = 0
+        b = 1
         transformed_nodes = 0.5 * (b - a) * nodes + 0.5 * (b + a)
 
         # Convert to TensorFlow tensors
@@ -120,25 +119,42 @@ class PINN(layers.Layer):
 
         # Evaluate the function at the transformed nodes using self.mlp
         _, _, func_at_nodes, _, _ = fourth_gradient(self.mlp, transformed_nodes)
+        print("Func_at_nodes:")
+        print(func_at_nodes*pow(self.w_c, 2)/pow(self.x_c, 4))
         func_at_nodes = tf.pow(func_at_nodes, 2)
 
         # Compute the internal energy
-        inter_en = 0.5 * self.EI * (tf.pow(self.w_c, 2) / tf.pow(self.x_c, 3)) * 0.5 * (b - a) * tf.reduce_sum(weights * func_at_nodes)
+        inter_en = 0.5 * self.EI * (tf.pow(self.w_c, 2) / tf.pow(self.x_c, 3))* 0.5 * (b - a) * tf.reduce_sum(weights * func_at_nodes)
+        print(inter_en)
 
         # Compute the external energy
         exter_en = self._external_energy(wL)
 
         # Calculate the resulting potential energy
         res_pel = inter_en - exter_en
+        print("internal_energy:")
+        print(inter_en)
+        print("external_energy:")
+        print(exter_en)
+        res_pel = inter_en - exter_en
+        print("res_pel:")
+        print(res_pel)
         #----------------------------------------------------------------------------#
         #---------------------------NORMAL INTEGRATION-------------------------------#
-        # _, _, func_at_nodes, _, _ = fourth_gradient(self.mlp, x)
+        # w_x, _, func_at_nodes, _, _ = fourth_gradient(self.mlp, x)
         # func_at_nodes = tf.pow(func_at_nodes, 2)
-        # h = tf.experimental.numpy.diff(x[:, 0])
+        # h = x[1:] - x[:-1]
 
         # inter_en = 0.5 * self.EI * (tf.pow(self.w_c, 2) / tf.pow(self.x_c, 3))*tf.reduce_sum(0.5*h*(func_at_nodes[:-1] + func_at_nodes[1:]))
-        # exter_en = self._external_energy(wL)
+        # #print(inter_en)
+        # exter_en = self._external_energy(w_x[-1])
+        # print("internal_energy:")
+        # print(inter_en)
+        # print("external_energy:")
+        # print(exter_en)
         # res_pel = inter_en - exter_en
+        # print("res_pel:")
+        # print(res_pel)
         #----------------------------------------------------------------------------#
         # Dirichlet boundary condition residuals
         res_dir_bc = (
@@ -157,7 +173,7 @@ class PINN(layers.Layer):
         res_data = self._labeled_data_residual()
 
         # assemble and add loss term
-        total_loss = self.w_pel * res_pel + (self.w_dir * res_dir_bc + self.w_neu * res_neu_bc) / 2 + self.w_data * res_data
+        total_loss = self.w_pel * (res_pel) + (self.w_dir * res_dir_bc + self.w_neu * res_neu_bc) / 2 + self.w_data * res_data
         self.add_loss(total_loss)
 
         return (
@@ -182,6 +198,7 @@ class PINN(layers.Layer):
     
     def _external_energy(self, w_L):
         '''Computes the external energy'''
+        #*self.w_c
         return self.F*self.w_c*w_L
     
     def _pel_residual(self, w_L, x):
@@ -213,6 +230,19 @@ def build(*args, **kwargs):
     # define optimizer
     model.compile('adam')
     return model
+    # x = tf.keras.Input(shape=(1,))
+    # # Define which (custom) layers the model uses
+    # pinn = PINN(*args, **kwargs)
+    # w, dw, M, Q, ddddw = pinn(x)
+    # # Connect input and output
+    # model = tf.keras.Model(inputs=[x], outputs=[w, dw, M, Q, ddddw])
+    
+    # # Define the optimizer as SGD
+    # optimizer = tf.keras.optimizers.SGD(learning_rate=0.1)
+    
+    # Compile the model
+    # model.compile(optimizer=optimizer, loss='mse')  # Assuming 'mse' as the loss function
+    # return model
 
 convert = lambda x: tf.expand_dims(tf.constant(x, dtype='float32'), axis=1)
 
@@ -237,14 +267,21 @@ def analytical_ebb(EI, F, L, x):
     return x, w, dw, M, Q, ddddw
 
 # Beam properties
-L = 0.2            # Length [m]
+# L = 0.2            # Length [m]
+# W = 0.02           # Width [m]
+# H = 0.02           # Height [m]
+# E = 50e6           # Young's modulus [Pa]
+
+L = 1            # Length [m]
 W = 0.02           # Width [m]
 H = 0.02           # Height [m]
-E = 50e6           # Young's modulus [Pa]
+E = 50e6  
 
 # Cross-section parameters (assuming rectangular cross-section)
 A = W * H
 I = H ** 3 * W / 12
+print("I:")
+print(I)
 param = [E, A, I, L]
 
 # Compute the analytical solution
@@ -287,9 +324,9 @@ plt.show()
 
 # Loss weights
 WPEL = 1.
-WDIR = 1.
-WNEU = 1.
-WDATA = 1.
+WDIR = 1000.
+WNEU = 0.
+WDATA = 0.
 
 # Load model
 model = build(WPEL, WDIR, WNEU, WDATA, param,
@@ -305,7 +342,7 @@ x_cal = tf.expand_dims(tf.convert_to_tensor(np.linspace(0, L, NCAL), dtype=tf.fl
 
 # Calibrate model
 NEPOCHS = 2500
-model.optimizer.learning_rate.assign(0.001)
+model.optimizer.learning_rate.assign(0.01)
 h = model.fit([x_cal], [x_cal, x_cal, x_cal, x_cal, x_cal],
               epochs=NEPOCHS,
               verbose=2,
