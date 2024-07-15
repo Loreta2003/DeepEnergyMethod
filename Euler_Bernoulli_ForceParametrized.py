@@ -125,10 +125,10 @@ def analytical_ebb(EI, F, L, x):
     return x, u, du, M, Q, ddddu
 
 # Define the model
-units = [10, 1]
+units = [3, 3, 3, 1]
 model = buildModel(
     units=units,
-    activation=['softplus', 'linear']
+    activation=['softplus', 'softplus', 'softplus', 'linear']
 )
 print(model)
 
@@ -136,7 +136,7 @@ print(model)
 x = torch.linspace(0, 1, 100, requires_grad=True).view(-1, 1)
 
 # Define a range of forces to train on
-forces = [5.0, 10.0, 15.0, 20.0]
+forces = [1.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0]
 
 # Beam properties
 L = 1            # Length [m]
@@ -152,7 +152,7 @@ I = H ** 3 * W / 12
 EI = lambda x: E * I + 0 * x
 
 # Training parameters
-learning_rate = 0.001
+learning_rate = 0.01
 num_epochs = 10000
 
 # Define the optimizer
@@ -172,8 +172,6 @@ for epoch in range(num_epochs):
         
         # Compute the internal and external energies
         internal_energy = getInternalEnergy(model, x, EI, force)
-        #internal_energy = getInternalEnergyWithGaussGlobal(model, 4, 0, 1, E, I, force)
-        #internal_energy = getInternalEnergyWithGaussLocal(model, 2, 2, 0, 1, E, I, force)
         
         # Compute the displacement at x = 1
         uL = getDisplacement(model, torch.tensor([[1.0]], requires_grad=True), force)
@@ -182,8 +180,16 @@ for epoch in range(num_epochs):
         external_energy = getExternalEnergy(uL, force)
         
         potential_energy = internal_energy - external_energy
+
+        # w_pe = 1.0
+        # w_force = 1.0
+
+        # _, du, ddu, dddu, ddddu = fourth_gradient(lambda x, f=force: getDisplacement(model, x, f), x, force)
+        # q_norm = -E*I*dddu / force
         
-        total_loss += potential_energy
+        # Normalize the loss by force^2 to ensure losses are comparable
+        total_loss += potential_energy / pow(force, 2)
+        # + w_force * torch.mean((q_norm - 1)**2)
     
     # Backpropagate the loss
     total_loss.backward()
@@ -196,8 +202,7 @@ end_time = time.time()
 training_duration = end_time - start_time
 print(f'Training Duration: {training_duration:.2f} seconds')
 
-
-test_force = 24.0
+test_force = 3.0
 u = getDisplacement(model, x, test_force).detach().numpy()
 _, du, ddu, dddu, ddddu = fourth_gradient(lambda x, f=test_force: getDisplacement(model, x, f), x, test_force)
 du, ddu, dddu, ddddu = du.detach().numpy(), ddu.detach().numpy(), dddu.detach().numpy(), ddddu.detach().numpy()
